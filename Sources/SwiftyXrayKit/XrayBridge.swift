@@ -23,7 +23,7 @@ public enum XrayBridgeError: Error {
     case invalidConfig
 }
 
-public final class XrayBridge {
+public final class XrayBridge: @unchecked Sendable {
 
     private weak var packetFlow: NEPacketTunnelFlow?
     private var swiftFd: Int32 = -1
