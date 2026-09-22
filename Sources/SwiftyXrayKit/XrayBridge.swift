@@ -44,20 +44,6 @@ public final class XrayBridge: @unchecked Sendable {
     }
 
     /// Starts XRay, building the config from `config` JSON.
-    ///
-    /// The kit injects the TUN inbound and optional sniffing, then calls
-    /// `configTransform` (if provided) so you can mutate any part of the
-    /// dictionary before it is written to `finalConfigPath` and run.
-    ///
-    /// - Parameters:
-    ///   - config: Intermediate Xray JSON (outbounds, routing, etc. — no inbound needed).
-    ///   - dataDir: Directory containing geo data files.
-    ///   - finalConfigPath: Where the final JSON is written before running.
-    ///   - sniffing: Optional sniffing injected into the TUN inbound.
-    ///   - preset: Tuning preset to apply before run. Defaults to `.default`.
-    ///   - configTransform: Optional closure receiving the kit-built config dictionary.
-    ///                      Return a modified copy to customise anything before writing.
-    ///   - traceHandle: Optional log sink for Xray lifecycle messages.
     public func start(
         config: XrayIntermediateConfig,
         dataDir: URL,
@@ -79,15 +65,6 @@ public final class XrayBridge: @unchecked Sendable {
     }
 
     /// Starts XRay with a fully pre-built config file — no patching applied.
-    ///
-    /// Use this when you want complete control over the Xray JSON.
-    /// The kit only creates the socketpair and passes the fd to Xray before running.
-    ///
-    /// - Parameters:
-    ///   - rawConfigPath: Path to your pre-built Xray config JSON.
-    ///   - dataDir: Directory containing geo data files.
-    ///   - preset: Tuning preset to apply before run. Defaults to `.default`.
-    ///   - traceHandle: Optional log sink for Xray lifecycle messages.
     public func startWithRawConfig(
         rawConfigPath: URL,
         dataDir: URL,
@@ -101,8 +78,7 @@ public final class XrayBridge: @unchecked Sendable {
         readFromPacketFlow()
     }
 
-    /// Returns the config dictionary that `start(config:…)` would produce,
-    /// without writing or running anything. Use to inspect or test the output.
+    /// Returns the config dictionary that `start(config:…)` would produce.
     public func buildConfig(
         config: XrayIntermediateConfig,
         sniffing: SniffingConfiguration? = nil,
@@ -194,13 +170,12 @@ public final class XrayBridge: @unchecked Sendable {
 
     // MARK: - Threads
 
-    // Reads packets from XRay (via fd[1]) and forwards them to the packet flow.
-    // SOCK_STREAM format: [4-byte big-endian AF][raw IP packet], back-to-back in the stream.
-    // Parses IP header length to find each packet boundary.
-    // Exits when recv returns 0 or an error (fd closed by stop()).
     private func launchReadThread(fd: Int32) {
-        guard let flow = packetFlow else { return }
         Thread.detachNewThread { [weak self] in
+            // `flow` — локальная переменная внутри @Sendable-замыкания,
+            // поэтому не требует conformance к Sendable.
+            guard let self, let flow = self.packetFlow else { return }
+
             let maxPacket = 65536
             let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: maxPacket)
             defer { buf.deallocate() }
@@ -253,11 +228,10 @@ public final class XrayBridge: @unchecked Sendable {
                         packet = Data(bytes: ipBuf, count: 40 + payloadLen)
                     }
 
-                    if let self {
-                        self.statsLock.lock()
-                        self._bytesReceived += Int64(packet.count)
-                        self.statsLock.unlock()
-                    }
+                    self.statsLock.lock()
+                    self._bytesReceived += Int64(packet.count)
+                    self.statsLock.unlock()
+
                     flow.writePackets([packet], withProtocols: [NSNumber(value: af)])
                 }
             }
